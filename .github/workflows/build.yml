@@ -11,8 +11,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Ambiente MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Configure
-        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build (Release)
         run: cmake --build build --config Release --target VUSteel_VST3
