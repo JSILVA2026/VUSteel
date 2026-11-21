@@ -22,8 +22,18 @@ jobs:
       - name: Build (Release)
         run: cmake --build build --config Release --target VUSteel_VST3
 
+      - name: Preparar pacote VST3
+        shell: pwsh
+        run: |
+          $bundle = Get-ChildItem -Path build -Recurse -Directory -Filter "*.vst3" | Select-Object -First 1
+          if (-not $bundle) { Write-Error "Nenhum .vst3 encontrado em build/"; exit 1 }
+          New-Item -ItemType Directory -Force -Path staging | Out-Null
+          Copy-Item $bundle.FullName -Destination staging -Recurse
+          Get-ChildItem staging -Recurse | Select-Object FullName
+
       - name: Upload VST3
         uses: actions/upload-artifact@v4
         with:
           name: VU-Steel-VST3
-          path: build/VUSteel_artifacts/Release/VST3/
+          path: staging
+          if-no-files-found: error
