@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(VUSteel VERSION 0.1.0 LANGUAGES C CXX)
+project(VUSteel VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,6 +23,9 @@ juce_add_plugin(VUSteel
     IS_MIDI_EFFECT FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
+# Arte da interface embutida no plugin (Source/INTERFACE_OK.png)
+juce_add_binary_data(VUSteelAssets SOURCES Source/INTERFACE_OK.png)
+
 juce_generate_juce_header(VUSteel)
 
 target_sources(VUSteel PRIVATE
@@ -35,6 +38,7 @@ target_compile_definitions(VUSteel PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0)
 
 target_link_libraries(VUSteel PRIVATE
+    VUSteelAssets
     juce::juce_audio_basics
     juce::juce_audio_processors
     juce::juce_audio_utils

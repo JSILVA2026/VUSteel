@@ -1,12 +1,53 @@
 #include "PluginEditor.h"
+#include "BinaryData.h"
+
+namespace
+{
+    // A arte foi desenhada em 1440 x 760 (2x da janela 720 x 380)
+    constexpr float kArtW = 1440.0f;
+    constexpr float kArtH = 760.0f;
+
+    // Eixo de cada agulha, medido na arte
+    const juce::Point<float> kPivotL (448.0f, 372.0f);
+    const juce::Point<float> kPivotR (1005.0f, 372.0f);
+
+    constexpr float kNeedleLen = 162.0f;
+
+    struct ScalePoint { float vu; float deg; };
+
+    // Calibração: valor VU -> ângulo em graus (0 = vertical).
+    // Valores estimados pela arte; ajuste aqui depois do primeiro teste.
+    constexpr ScalePoint kScale[] = {
+        { -20.0f, -42.0f }, { -10.0f, -33.0f }, { -7.0f, -23.0f }, { -5.0f, -11.0f },
+        {  -3.0f,   1.0f }, {  -2.0f,   9.0f }, { -1.0f,  14.0f }, {  0.0f,  20.0f },
+        {   1.0f,  27.0f }, {   2.0f,  32.0f }, {  3.0f,  36.0f }, {  5.0f,  44.0f }
+    };
+    constexpr int kScaleCount = (int) (sizeof (kScale) / sizeof (kScale[0]));
+
+    bool isLabelled (int v)
+    {
+        for (int i = 0; i < kScaleCount; ++i)
+            if ((int) kScale[i].vu == v)
+                return true;
+        return false;
+    }
+
+    juce::Point<float> polar (juce::Point<float> pivot, float deg, float r)
+    {
+        const float a = juce::degreesToRadians (deg);
+        return { pivot.x + r * std::sin (a), pivot.y - r * std::cos (a) };
+    }
+}
 
 VUEditor::VUEditor (VUMeterProcessor& p)
     : AudioProcessorEditor (&p),
       proc (p),
-      modeAtt  (p.apvts, "mode",  modeBox),
-      refAtt   (p.apvts, "ref",   refKnob),
-      trimAtt  (p.apvts, "trim",  trimKnob),
-      lampAtt  (p.apvts, "lamp",  lampKnob)
+      background (juce::ImageCache::getFromMemory (BinaryData::INTERFACE_OK_png,
+                                                   BinaryData::INTERFACE_OK_pngSize)),
+      modeAtt (p.apvts, "mode", modeBox),
+      refAtt  (p.apvts, "ref",  refKnob),
+      trimAtt (p.apvts, "trim", trimKnob),
+      lampAtt (p.apvts, "lamp", lampKnob)
 {
     modeBox.addItem ("VU", 1);
     modeBox.addItem ("PPM", 2);
@@ -30,16 +71,25 @@ VUEditor::~VUEditor()
     stopTimer();
 }
 
-float VUEditor::degFor (float vu)
+float VUEditor::vuToDeg (float vu)
 {
-    // Escala -20 a +3 VU, varrendo de -45° a +45°
-    const float t = juce::jlimit (0.0f, 1.0f, (vu + 20.0f) / 23.0f);
-    return -45.0f + 90.0f * t;
+    if (vu <= kScale[0].vu)               return kScale[0].deg;
+    if (vu >= kScale[kScaleCount - 1].vu) return kScale[kScaleCount - 1].deg;
+
+    for (int i = 0; i < kScaleCount - 1; ++i)
+    {
+        if (vu <= kScale[i + 1].vu)
+        {
+            const float t = (vu - kScale[i].vu) / (kScale[i + 1].vu - kScale[i].vu);
+            return kScale[i].deg + t * (kScale[i + 1].deg - kScale[i].deg);
+        }
+    }
+    return kScale[kScaleCount - 1].deg;
 }
 
 void VUEditor::timerCallback()
 {
-    // Massa-mola amortecida (dt = 1/60 s): comportamento mecânico da agulha
+    // Massa-mola amortecida (dt = 1/60 s): movimento mecânico da agulha
     const float dt = 1.0f / 60.0f, k = 400.0f, c = 34.0f;
 
     auto step = [dt, k, c] (float target, float& ang, float& vel)
@@ -49,228 +99,106 @@ void VUEditor::timerCallback()
         ang += vel * dt;
     };
 
-    step (degFor (proc.levelL.load()), angL, velL);
-    step (degFor (proc.levelR.load()), angR, velR);
+    step (vuToDeg (proc.levelL.load()), angL, velL);
+    step (vuToDeg (proc.levelR.load()), angR, velR);
     repaint();
 }
 
-juce::Image VUEditor::makeSteel (int w, int h) const
+void VUEditor::drawMeter (juce::Graphics& g, juce::Point<float> pivot, float angleDeg,
+                          const juce::String& channel, float lamp, int mode) const
 {
-    juce::Image img (juce::Image::ARGB, w, h, true);
-    juce::Graphics g (img);
+    const auto red  = juce::Colour (0xffb0201c);
+    const auto dark = juce::Colour (0xff1a1a1a);
 
-    juce::ColourGradient base (juce::Colour (0xffb9bcc0), 0.0f, 0.0f,
-                               juce::Colour (0xff8a8e94), 0.0f, (float) h, false);
-    g.setGradientFill (base);
-    g.fillAll();
-
-    // Escovado: linhas horizontais finas e aleatórias (seed fixa = textura estável)
-    juce::Random rnd (7);
-    for (int i = 0; i < 3000; ++i)
+    // Luz traseira, suave, sobre o mostrador
+    if (lamp > 0.0f)
     {
-        const float x = rnd.nextFloat() * w;
-        const float y = rnd.nextFloat() * h;
-        const float len = 40.0f + rnd.nextFloat() * 260.0f;
-        const float a = 0.02f + rnd.nextFloat() * 0.06f;
-        g.setColour ((rnd.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (a));
-        g.drawHorizontalLine ((int) y, x, x + len);
+        juce::ColourGradient glow (juce::Colour (0xffffd9a0).withAlpha (0.28f * lamp),
+                                   pivot.x, pivot.y - 150.0f,
+                                   juce::Colours::transparentBlack,
+                                   pivot.x, pivot.y - 410.0f, true);
+        g.setGradientFill (glow);
+        g.fillEllipse (pivot.x - 260.0f, pivot.y - 410.0f, 520.0f, 520.0f);
     }
 
-    // Desgaste: arranhões pontuais e manchas de oxidação leve
-    for (int i = 0; i < 40; ++i)
+    // Marcas: maiores nos valores rotulados, menores nos intermediários
+    for (int v = -20; v <= 5; ++v)
     {
-        const float x = rnd.nextFloat() * w, y = rnd.nextFloat() * h;
-        g.setColour (juce::Colours::black.withAlpha (0.10f));
-        g.drawLine (x, y, x + rnd.nextFloat() * 30.0f - 15.0f, y + rnd.nextFloat() * 6.0f, 0.6f);
-    }
-    for (int i = 0; i < 12; ++i)
-    {
-        const float x = rnd.nextFloat() * w, y = rnd.nextFloat() * h;
-        g.setColour (juce::Colour (0xff6b5a44).withAlpha (0.05f));
-        g.fillEllipse (x, y, 30.0f + rnd.nextFloat() * 60.0f, 20.0f + rnd.nextFloat() * 40.0f);
+        const float deg = vuToDeg ((float) v);
+        const bool major = isLabelled (v);
+        g.setColour (v > 0 ? red : dark);
+        g.drawLine (juce::Line<float> (polar (pivot, deg, major ? 146.0f : 152.0f),
+                                       polar (pivot, deg, 160.0f)),
+                    major ? 2.2f : 1.2f);
     }
 
-    // Bordas levemente escurecidas pelo uso
-    g.setColour (juce::Colours::black.withAlpha (0.25f));
-    g.drawRect (img.getBounds().toFloat(), 3.0f);
+    // Faixa vermelha acima de 0 VU
+    g.setColour (red.withAlpha (0.85f));
+    for (float v = 0.0f; v <= 5.0f; v += 0.25f)
+    {
+        const float deg = vuToDeg (v);
+        g.drawLine (juce::Line<float> (polar (pivot, deg, 152.0f), polar (pivot, deg, 160.0f)), 3.0f);
+    }
 
-    return img;
+    // Rótulos dos valores
+    g.setFont (juce::Font (15.0f, juce::Font::bold));
+    for (int i = 0; i < kScaleCount; ++i)
+    {
+        const float vu = kScale[i].vu;
+        const juce::String txt (std::abs ((int) vu));
+        g.setColour (vu > 0.0f ? red : dark);
+        g.drawText (txt, juce::Rectangle<float> (40.0f, 22.0f)
+                            .withCentre (polar (pivot, kScale[i].deg, 124.0f)),
+                    juce::Justification::centred, false);
+    }
+
+    // Identificação do modo e do canal
+    const juce::String modeName = mode == 0 ? "VU" : (mode == 1 ? "PPM" : "PEAK");
+    g.setColour (dark.withAlpha (0.85f));
+    g.setFont (juce::Font (26.0f, juce::Font::bold));
+    g.drawText (modeName, juce::Rectangle<float> (140.0f, 40.0f)
+                    .withCentre ({ pivot.x, pivot.y - 80.0f }),
+                juce::Justification::centred, false);
+
+    g.setFont (juce::Font (18.0f, juce::Font::plain));
+    g.drawText (channel, juce::Rectangle<float> (40.0f, 26.0f)
+                    .withCentre ({ pivot.x - 110.0f, pivot.y - 20.0f }),
+                juce::Justification::centred, false);
+
+    // Agulha: sombra e corpo, com o eixo no centro
+    const auto tip = polar (pivot, angleDeg, kNeedleLen);
+    g.setColour (juce::Colours::black.withAlpha (0.35f));
+    g.drawLine (juce::Line<float> (pivot.translated (3.0f, 4.0f), tip.translated (3.0f, 4.0f)), 3.0f);
+    g.setColour (juce::Colour (0xff141414));
+    g.drawLine (juce::Line<float> (pivot, tip), 2.6f);
+    g.fillEllipse (pivot.x - 9.0f, pivot.y - 9.0f, 18.0f, 18.0f);
 }
 
-juce::Image VUEditor::makePaper (int w, int h) const
+void VUEditor::paint (juce::Graphics& g)
 {
-    juce::Image img (juce::Image::ARGB, w, h, true);
-    juce::Graphics g (img);
+    const auto bounds = getLocalBounds().toFloat();
 
-    juce::ColourGradient cg (juce::Colour (0xfff3ecd8), 0.0f, 0.0f,
-                             juce::Colour (0xffd8ccae), 0.0f, (float) h, false);
-    g.setGradientFill (cg);
-    g.fillAll();
+    // Fundo: a sua arte inteira
+    g.drawImage (background, bounds);
 
-    juce::Random rnd (21);
-    for (int i = 0; i < 1500; ++i)
-    {
-        g.setColour (juce::Colour (0x14000000));
-        g.fillEllipse (rnd.nextFloat() * w, rnd.nextFloat() * h, 1.5f, 1.5f);
-    }
-    // Manchas de envelhecimento
-    for (int i = 0; i < 6; ++i)
-    {
-        g.setColour (juce::Colour (0xff9b7f4a).withAlpha (0.05f));
-        g.fillEllipse (rnd.nextFloat() * w, rnd.nextFloat() * h, 80.0f, 60.0f);
-    }
-    return img;
-}
+    // Daqui em diante, desenhamos na escala da arte (1440 x 760)
+    g.addTransform (juce::AffineTransform::scale (bounds.getWidth() / kArtW,
+                                                  bounds.getHeight() / kArtH));
 
-void VUEditor::drawScrew (juce::Graphics& g, juce::Point<float> c) const
-{
-    juce::ColourGradient cg (juce::Colour (0xffe0e2e6), c.x - 3, c.y - 3,
-                             juce::Colour (0xff5d6168), c.x + 4, c.y + 4, false);
-    g.setGradientFill (cg);
-    g.fillEllipse (c.x - 6, c.y - 6, 12.0f, 12.0f);
-    g.setColour (juce::Colour (0xff2a2b2e));
-    g.drawLine (c.x - 4, c.y, c.x + 4, c.y, 1.2f);
+    const int mode   = (int) proc.apvts.getRawParameterValue ("mode")->load();
+    const float lamp = proc.apvts.getRawParameterValue ("lamp")->load();
+
+    drawMeter (g, kPivotL, angL, "L", lamp, mode);
+    drawMeter (g, kPivotR, angR, "R", lamp, mode);
 }
 
 void VUEditor::resized()
 {
-    auto b = getLocalBounds();
-    steel = makeSteel (b.getWidth(), b.getHeight());
-
-    auto meters = b.removeFromTop (b.getHeight() - 96).reduced (28);
-    auto leftArea  = meters.removeFromLeft (meters.getWidth() / 2).reduced (10);
-    auto rightArea = meters.reduced (10);
-
-    faceL = leftArea.toFloat();
-    faceR = rightArea.toFloat();
-    paper = makePaper ((int) faceL.getWidth(), (int) faceL.getHeight());
-
-    auto row = b.reduced (40, 12);
+    // Controles na faixa inferior da janela (a arte deixa essa área livre)
+    auto row = getLocalBounds().removeFromBottom (96).reduced (40, 12);
     const int w = row.getWidth() / 4;
     modeBox.setBounds (row.removeFromLeft (w).reduced (20, 26));
     refKnob.setBounds  (row.removeFromLeft (w).reduced (10));
     trimKnob.setBounds (row.removeFromLeft (w).reduced (10));
     lampKnob.setBounds (row.removeFromLeft (w).reduced (10));
-}
-
-void VUEditor::drawFace (juce::Graphics& g, juce::Rectangle<float> f,
-                         float angleDeg, const juce::String& channel, float lamp, int mode)
-{
-    // Moldura escura em metal
-    g.setColour (juce::Colour (0xff1c1d20));
-    g.fillRoundedRectangle (f.expanded (7.0f), 8.0f);
-    g.setColour (juce::Colour (0xff50545a));
-    g.drawRoundedRectangle (f.expanded (7.0f), 8.0f, 1.5f);
-
-    g.saveState();
-    juce::Path clip;
-    clip.addRoundedRectangle (f, 4.0f);
-    g.reduceClipRegion (clip);
-
-    // Papel do mostrador
-    g.drawImageAt (paper, (int) f.getX(), (int) f.getY());
-
-    // Iluminação traseira
-    if (lamp > 0.0f)
-    {
-        juce::ColourGradient glow (juce::Colour (0xffffd9a0).withAlpha (0.35f * lamp),
-                                   f.getCentreX(), f.getBottom(),
-                                   juce::Colours::transparentBlack,
-                                   f.getCentreX(), f.getY(), true);
-        g.setGradientFill (glow);
-        g.fillRect (f);
-    }
-
-    const auto piv = juce::Point<float> (f.getCentreX(), f.getBottom() - f.getHeight() * 0.10f);
-    const float R = f.getHeight() * 0.80f;
-
-    auto polar = [piv] (float deg, float rad)
-    {
-        const float a = juce::degreesToRadians (deg);
-        return juce::Point<float> (piv.x + rad * std::sin (a), piv.y - rad * std::cos (a));
-    };
-
-    // Escala
-    for (int v = -20; v <= 3; ++v)
-    {
-        const float d = degFor ((float) v);
-        const bool major = (v % 5 == 0);
-        const float r0 = R * (major ? 0.84f : 0.88f);
-        const auto p0 = polar (d, r0), p1 = polar (d, R * 0.94f);
-
-        g.setColour (v > 0 ? juce::Colour (0xffb0201c) : juce::Colour (0xff1a1a1a));
-        g.drawLine (juce::Line<float> (p0, p1), major ? 2.0f : 1.0f);
-
-        if (major)
-        {
-            const auto lp = polar (d, R * 0.68f);
-            juce::String txt = (v > 0 ? "+" : "") + juce::String (v);
-            if (v == 0) txt = "0";
-            g.setColour (v > 0 ? juce::Colour (0xffb0201c) : juce::Colour (0xff1a1a1a));
-            g.setFont (juce::Font (13.0f, juce::Font::bold));
-            g.drawText (txt, juce::Rectangle<float> (34.0f, 16.0f).withCentre (lp),
-                        juce::Justification::centred, false);
-        }
-    }
-
-    // Arco vermelho na zona acima de 0 VU
-    g.setColour (juce::Colour (0xffb0201c).withAlpha (0.8f));
-    for (float d = degFor (0.0f); d <= degFor (3.0f); d += 0.8f)
-        g.drawLine (juce::Line<float> (polar (d, R * 0.93f), polar (d, R * 0.98f)), 3.0f);
-
-    // Rótulo do modo
-    const juce::String modeName = mode == 0 ? "VU" : (mode == 1 ? "PPM" : "PEAK");
-    g.setColour (juce::Colour (0xff1a1a1a).withAlpha (0.8f));
-    g.setFont (juce::Font (12.0f, juce::Font::bold));
-    g.drawText (modeName, juce::Rectangle<float> (60.0f, 16.0f)
-                    .withCentre ({ f.getCentreX(), f.getBottom() - 34.0f }),
-                juce::Justification::centred, false);
-
-    // Agulha: sombra + corpo
-    const auto tip = polar (angleDeg, R * 0.95f);
-    g.setColour (juce::Colours::black.withAlpha (0.30f));
-    g.drawLine (juce::Line<float> (piv.translated (2.0f, 3.0f), tip.translated (2.0f, 3.0f)), 2.5f);
-    g.setColour (juce::Colour (0xff111111));
-    g.drawLine (juce::Line<float> (piv, tip), 2.0f);
-    g.fillEllipse (piv.x - 6.0f, piv.y - 6.0f, 12.0f, 12.0f);
-
-    // Reflexo do vidro na metade superior
-    juce::ColourGradient gloss (juce::Colours::white.withAlpha (0.10f), f.getCentreX(), f.getY(),
-                                juce::Colours::transparentWhite, f.getCentreX(), f.getCentreY(), false);
-    g.setGradientFill (gloss);
-    g.fillRect (f.withHeight (f.getHeight() * 0.5f));
-
-    g.restoreState();
-
-    // Identificação do canal
-    g.setColour (juce::Colour (0xff1a1a1a));
-    g.setFont (juce::Font (11.0f, juce::Font::plain));
-    g.drawText (channel, juce::Rectangle<float> (40.0f, 14.0f)
-                    .withCentre ({ f.getX() + 26.0f, f.getBottom() - 16.0f }),
-                juce::Justification::centred, false);
-}
-
-void VUEditor::paint (juce::Graphics& g)
-{
-    g.drawImageAt (steel, 0, 0);
-
-    const int mode = (int) proc.apvts.getRawParameterValue ("mode")->load();
-    const float lamp = proc.apvts.getRawParameterValue ("lamp")->load();
-
-    drawFace (g, faceL, angL, "L", lamp, mode);
-    drawFace (g, faceR, angR, "R", lamp, mode);
-
-    // Parafusos nos cantos
-    const auto b = getLocalBounds().toFloat();
-    for (auto p : { juce::Point<float> (14, 14), juce::Point<float> (b.getRight() - 14, 14),
-                    juce::Point<float> (14, b.getBottom() - 14),
-                    juce::Point<float> (b.getRight() - 14, b.getBottom() - 14) })
-        drawScrew (g, p);
-
-    // Placa de identificação
-    g.setColour (juce::Colour (0xff2a2b2e));
-    g.setFont (juce::Font (10.0f, juce::Font::bold));
-    g.drawText ("STEEL  VU  STEREO", juce::Rectangle<float> (300.0f, 14.0f)
-                    .withCentre ({ b.getCentreX(), b.getBottom() - 92.0f }),
-                juce::Justification::centred, false);
 }
