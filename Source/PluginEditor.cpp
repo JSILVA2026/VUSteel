@@ -3,9 +3,9 @@
 
 namespace
 {
-    // Tamanho do canvas do seu esboço. Se o canvas for diferente, ajuste aqui.
-    constexpr float kCanvasW = 1600.0f;
-    constexpr float kCanvasH = 800.0f;
+    // Canvas = base da arte (INTERFACE_OK.png), 1440 x 760
+    constexpr float kCanvasW = 1440.0f;
+    constexpr float kCanvasH = 760.0f;
 
     // Posições e tamanhos exatos, na mesma escala do canvas
     const juce::Rectangle<float> kMeterRect[2] = {
@@ -106,7 +106,7 @@ VUEditor::VUEditor (VUMeterProcessor& p)
         addAndMakeVisible (knobs[i]);
     }
 
-    setSize (1200, 600);   // canvas 1600x800 a 75%
+    setSize (1080, 570);   // canvas 1440x760 a 75%
     startTimerHz (60);
 }
 
@@ -174,7 +174,7 @@ void VUEditor::drawNeedle (juce::Graphics& g, int i, float angleDeg) const
 
 void VUEditor::paint (juce::Graphics& g)
 {
-    // Daqui em diante, tudo na escala do canvas (1600 x 800)
+    // Daqui em diante, tudo na escala do canvas (1440 x 760)
     g.addTransform (artToLocal());
 
     // Fundo: a arte inteira, na mesma escala dos demais elementos
