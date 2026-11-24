@@ -1,13 +1,18 @@
 #pragma once
 #include "PluginProcessor.h"
 
-// Knob estilo console: aro com escala 0-10, capa de metal escuro e indicador claro
-class NeveLookAndFeel : public juce::LookAndFeel_V4
+// Knob que gira a própria imagem do botão (PNG)
+class ImageKnobLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
+    void setImage (juce::Image img) { image = std::move (img); }
+
     void drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
                            float sliderPos, float startAngle, float endAngle,
                            juce::Slider&) override;
+
+private:
+    juce::Image image;
 };
 
 class VUEditor : public juce::AudioProcessorEditor,
@@ -22,21 +27,21 @@ public:
 
 private:
     void timerCallback() override;
-
-    void drawMeter (juce::Graphics& g, juce::Point<float> pivot, juce::Point<float> centre,
-                    float angleDeg, const juce::String& channel, float lamp, int mode) const;
-
+    void drawNeedle (juce::Graphics& g, int meterIndex, float angleDeg) const;
     static float vuToDeg (float vu);
     juce::AffineTransform artToLocal() const;
 
     VUMeterProcessor& proc;
-    juce::Image background;
 
-    NeveLookAndFeel neve;
+    juce::Image background;
+    juce::Image medidorImg[2];
+    juce::Image btnImg[3];
+    juce::Image panelImg;
+
+    ImageKnobLookAndFeel knobLaf[3];
 
     juce::ComboBox modeBox;
     juce::Slider refKnob, trimKnob, lampKnob;
-    juce::Label modeLabel, refLabel, trimLabel, lampLabel;
 
     juce::AudioProcessorValueTreeState::ComboBoxAttachment modeAtt;
     juce::AudioProcessorValueTreeState::SliderAttachment   refAtt, trimAtt, lampAtt;

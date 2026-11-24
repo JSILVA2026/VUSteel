@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(VUSteel VERSION 0.2.0 LANGUAGES C CXX)
+project(VUSteel VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,8 +23,24 @@ juce_add_plugin(VUSteel
     IS_MIDI_EFFECT FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-# Arte da interface embutida no plugin (Source/INTERFACE_OK.png)
-juce_add_binary_data(VUSteelAssets SOURCES Source/INTERFACE_OK.png)
+# Copia os PNGs com nomes ASCII (sem acento e espaço) para o build
+set(VU_ART_DIR   "${CMAKE_CURRENT_SOURCE_DIR}/Source")
+set(VU_ASSET_DIR "${CMAKE_BINARY_DIR}/assets")
+configure_file("${VU_ART_DIR}/BOTÃO 01.png"  "${VU_ASSET_DIR}/botao_01.png"  COPYONLY)
+configure_file("${VU_ART_DIR}/BOTÃO 02.png"  "${VU_ASSET_DIR}/botao_02.png"  COPYONLY)
+configure_file("${VU_ART_DIR}/BOTÃO 03.png"  "${VU_ASSET_DIR}/botao_03.png"  COPYONLY)
+configure_file("${VU_ART_DIR}/MEDIDOR_01.png" "${VU_ASSET_DIR}/medidor_01.png" COPYONLY)
+configure_file("${VU_ART_DIR}/MEDIDOR_02.png" "${VU_ASSET_DIR}/medidor_02.png" COPYONLY)
+configure_file("${VU_ART_DIR}/PANEL_01.png"  "${VU_ASSET_DIR}/panel_01.png"  COPYONLY)
+
+juce_add_binary_data(VUSteelAssets SOURCES
+    Source/INTERFACE_OK.png
+    "${VU_ASSET_DIR}/botao_01.png"
+    "${VU_ASSET_DIR}/botao_02.png"
+    "${VU_ASSET_DIR}/botao_03.png"
+    "${VU_ASSET_DIR}/medidor_01.png"
+    "${VU_ASSET_DIR}/medidor_02.png"
+    "${VU_ASSET_DIR}/panel_01.png")
 
 juce_generate_juce_header(VUSteel)
 
